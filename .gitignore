@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+dist/
+build/
+
+# Configuração local (pode conter dados sensíveis)
+config.json
+
+# Logs
+*.log
+sgp_auto.log
+
+# PyInstaller
+*.spec
+
+# Ambientes virtuais
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Chrome profile
+sgpilot-chrome-profile/
