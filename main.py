@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SGPilot v5.2
+SGPilot v5.1
 - Rebranded: SGPilot
 - Duas abas: SGP + Papervines com temas visuais distintos
 - SGP: dark navy + verde/amarelo (combina com logo SGPilot)
@@ -73,7 +73,7 @@ except ImportError:
 #  CONSTANTES
 # ════════════════════════════════════════════════════════════
 
-APP_VERSION = "5.2.0"
+APP_VERSION = "5.1.0"
 
 # PyInstaller: __file__ aponta para temp, mas os logos ficam junto ao .exe
 if getattr(sys, 'frozen', False):
@@ -198,6 +198,7 @@ DEFAULT_CONFIG = {
             "types": ["text_ocr"],
             "message": "OFF LOSI/LOBI\n\n{numero}",
             "sgp_tipo_filtro": "", "sgp_origem_filtro": "whatsapp",
+            "sgp_os_motivo_filtro": "corretiva",
             "sgp_desmarcar_os": True, "sgp_auto_cadastrar": False, "sgp_auto_cadastrar_os": False
         },
         {
@@ -206,6 +207,7 @@ DEFAULT_CONFIG = {
             "types": ["text_ocr"],
             "message": "OFF COM POTÊNCIA FTTx (feito procedimentos porém sem sucesso)\n\n{numero}",
             "sgp_tipo_filtro": "", "sgp_origem_filtro": "whatsapp",
+            "sgp_os_motivo_filtro": "corretiva",
             "sgp_desmarcar_os": True, "sgp_auto_cadastrar": False, "sgp_auto_cadastrar_os": False
         },
         {
@@ -214,6 +216,7 @@ DEFAULT_CONFIG = {
             "types": ["text_ocr"],
             "message": "OFFLINE Dying-gasp\n\n{numero}",
             "sgp_tipo_filtro": "", "sgp_origem_filtro": "whatsapp",
+            "sgp_os_motivo_filtro": "corretiva",
             "sgp_desmarcar_os": True, "sgp_auto_cadastrar": False, "sgp_auto_cadastrar_os": False
         },
         {
@@ -222,6 +225,7 @@ DEFAULT_CONFIG = {
             "types": ["text_ocr"],
             "message": "Sinal atenuado -27.00 FTTx\n\n{numero}",
             "sgp_tipo_filtro": "", "sgp_origem_filtro": "whatsapp",
+            "sgp_os_motivo_filtro": "corretiva",
             "sgp_desmarcar_os": True, "sgp_auto_cadastrar": False, "sgp_auto_cadastrar_os": False
         },
         {
@@ -230,6 +234,7 @@ DEFAULT_CONFIG = {
             "types": ["sgp_ocorrencia"],
             "message": "Comprovante de pagamento referente ao mês {mes}",
             "sgp_tipo_filtro": "sus", "sgp_origem_filtro": "whatsapp",
+            "sgp_os_motivo_filtro": "corretiva",
             "sgp_desmarcar_os": True, "sgp_auto_cadastrar": False, "sgp_auto_cadastrar_os": False
         },
         {
@@ -243,6 +248,7 @@ DEFAULT_CONFIG = {
                 "\n*Link para pagamento abaixo:*\n{link}"
             ),
             "sgp_tipo_filtro": "", "sgp_origem_filtro": "whatsapp",
+            "sgp_os_motivo_filtro": "corretiva",
             "sgp_desmarcar_os": True, "sgp_auto_cadastrar": False, "sgp_auto_cadastrar_os": False
         }
     ]
@@ -273,6 +279,9 @@ class ConfigManager:
                     # Migra binds sem sgp_auto_cadastrar_os (padrão: False)
                     if "sgp_auto_cadastrar_os" not in b:
                         b["sgp_auto_cadastrar_os"] = False
+                    # Migra binds sem sgp_os_motivo_filtro (padrão: "corretiva")
+                    if "sgp_os_motivo_filtro" not in b:
+                        b["sgp_os_motivo_filtro"] = "corretiva"
                 # Migra config sem papervines (v4 → v5)
                 if "papervines" not in d:
                     d["papervines"] = dict(DEFAULT_CONFIG["papervines"])
@@ -822,6 +831,7 @@ class SGPSelenium:
         desmarcar_os   = bind.get("sgp_desmarcar_os",   True)
         auto_cadastrar = bind.get("sgp_auto_cadastrar", False)
         auto_os        = bind.get("sgp_auto_cadastrar_os", False)
+        motivo_filtro  = bind.get("sgp_os_motivo_filtro", "corretiva")
 
         # Se auto OS está ativo: força cadastrar=True e OS marcado
         if auto_os:
@@ -866,68 +876,83 @@ class SGPSelenium:
 
         # ── Etapa 3: Preencher formulário de OS (se auto_os ativo) ──
         if auto_os and resultado and (resultado == "OK" or resultado.startswith("ERROS:")):
-            log.info("  Auto OS ativo → aguardando formulário de OS...")
-            self._preencher_os_corretiva()
+            log.info(f"  Auto OS ativo → aguardando formulário de OS (motivo='{motivo_filtro}')...")
+            self._preencher_os_corretiva(motivo_filtro)
 
-    def _preencher_os_corretiva(self):
+    def _preencher_os_corretiva(self, motivo_filtro: str = "corretiva"):
         """
         Após cadastrar ocorrência com Gerar OS marcado, o SGP redireciona
         para o formulário de OS. Este método:
           1. Aguarda a página de OS carregar
-          2. Seleciona 'corretiva' no campo Motivo (Select2 #id_motivoos)
-          3. Clica em Cadastrar
+          2. Seleciona o motivo (filtro configurável) no campo Motivo (Select2 #id_motivoos)
+          3. Clica em Cadastrar (tenta #btacao e fallback p/ input.button.green)
         """
         try:
             # Aguarda a página de OS carregar (campo motivo aparece)
-            log.debug("  Aguardando campo Motivo na página de OS...")
+            log.debug(f"  Aguardando campo Motivo na página de OS (filtro='{motivo_filtro}')...")
             time.sleep(1.5)  # Espera navegação do formulário
 
             js_os = """
+            var motivoFiltro = arguments[0].toLowerCase();
             if (typeof jQuery === 'undefined') return 'NO_JQUERY';
 
             // Verifica se o campo motivo existe (indica que estamos na pág de OS)
             var $motivo = jQuery('#id_motivoos');
             if (!$motivo.length) return 'NO_MOTIVO';
 
-            // Seleciona "corretiva" no dropdown de motivo
+            // Seleciona o motivo filtrado no dropdown
             var match = null;
             $motivo.find('option').each(function() {
-                if (!match && jQuery(this).text().toLowerCase().indexOf('corretiva') !== -1) {
+                if (!match && jQuery(this).text().toLowerCase().indexOf(motivoFiltro) !== -1) {
                     match = jQuery(this).val();
                 }
             });
-            if (match === null) return 'NO_MATCH_CORRETIVA';
+            if (match === null) return 'NO_MATCH_MOTIVO';
 
             $motivo.val(match).trigger('change');
 
-            // Clica em Cadastrar
-            var btn = document.getElementById('btacao');
-            if (btn) btn.click();
+            // Clica em Cadastrar — tenta o ID conhecido e fallback pelo seletor CSS
+            // (o 2º formulário do SGP novo usa <input type="submit" class="button green">)
+            var btn = document.getElementById('btacao')
+                   || document.querySelector('input[type="submit"].button.green')
+                   || document.querySelector('input.button.green[value="Cadastrar"]')
+                   || document.querySelector('button.button.green');
+            if (!btn) return 'NO_BUTTON';
+            btn.click();
 
             return 'OS_OK';
             """
 
             # Tenta executar na aba atual (deve ser a OS após redirect)
-            resultado = self.driver.execute_script(js_os)
-            log.info(f"  OS corretiva resultado: {resultado}")
+            resultado = self.driver.execute_script(js_os, motivo_filtro)
+            log.info(f"  OS motivo='{motivo_filtro}' resultado: {resultado}")
 
             if resultado == "NO_MOTIVO":
                 # Talvez a página ainda não carregou, tenta de novo
                 log.debug("  Campo motivo não encontrado, aguardando mais...")
                 time.sleep(2)
-                resultado = self.driver.execute_script(js_os)
-                log.info(f"  OS corretiva retry: {resultado}")
+                resultado = self.driver.execute_script(js_os, motivo_filtro)
+                log.info(f"  OS motivo retry: {resultado}")
 
-            if resultado == "NO_MATCH_CORRETIVA":
-                log.warning("  Opção 'corretiva' não encontrada no dropdown de motivo")
+            if resultado == "NO_MATCH_MOTIVO":
+                log.warning(f"  Opção '{motivo_filtro}' não encontrada no dropdown de motivo")
                 messagebox.showwarning(
                     "Motivo não encontrado",
-                    "A opção 'corretiva' não foi encontrada no campo Motivo.\n"
-                    "Verifique o formulário de OS manualmente."
+                    f"A opção '{motivo_filtro}' não foi encontrada no campo Motivo.\n"
+                    "Verifique se o texto do filtro bate com alguma opção do SGP\n"
+                    "ou preencha o formulário de OS manualmente."
+                )
+
+            if resultado == "NO_BUTTON":
+                log.warning("  Botão Cadastrar do formulário de OS não encontrado")
+                messagebox.showwarning(
+                    "Botão não encontrado",
+                    "O motivo foi selecionado mas o botão 'Cadastrar' não foi localizado.\n"
+                    "Clique manualmente para finalizar o cadastro da OS."
                 )
 
         except Exception as e:
-            log.error(f"  Erro ao preencher OS corretiva: {e}", exc_info=True)
+            log.error(f"  Erro ao preencher OS: {e}", exc_info=True)
             messagebox.showerror("Erro OS", f"Falha ao preencher formulário de OS:\n{e}")
 
     # ── LEITURA DE NÚMERO VIA HTML (substitui OCR) ───────────
@@ -1510,6 +1535,11 @@ class PapervinesAutomation:
                     time.sleep(1)
                     continue
 
+                # 6. Fecha o modal "Atendimento transferido com sucesso" (clica OK)
+                #    Evita que o modal fique aberto e bloqueie o próximo ciclo.
+                time.sleep(0.6)  # espera o modal aparecer
+                self._clicar_ok_sucesso()
+
                 transferidos += 1
                 self._status(f"Transferido! Total: {transferidos}")
                 time.sleep(delay_s)
@@ -1522,6 +1552,61 @@ class PapervinesAutomation:
             self._parar = False
             if transferidos > 0:
                 self._status(f"Finalizado! {transferidos} clientes transferidos.")
+
+    def _clicar_ok_sucesso(self) -> bool:
+        """
+        Clica no botão 'OK' do modal de confirmação
+        'Atendimento transferido com sucesso'.
+
+        HTML de referência:
+          <button mat-stroked-button="" class="mat-stroked-button ...">
+            <span class="mat-button-wrapper"> OK </span>...
+          </button>
+
+        Sem esse clique, o modal bloqueia a próxima transferência.
+        """
+        for tentativa in range(4):
+            try:
+                js = """
+                // 1. Busca botões mat-stroked-button com texto OK (case-insensitive, trim)
+                var btns = document.querySelectorAll('button[mat-stroked-button], button.mat-stroked-button');
+                for (var i = 0; i < btns.length; i++) {
+                    if (btns[i].offsetParent === null) continue; // invisível
+                    var wrapper = btns[i].querySelector('.mat-button-wrapper');
+                    var txt = (wrapper ? wrapper.textContent : btns[i].textContent).trim().toUpperCase();
+                    if (txt === 'OK') {
+                        btns[i].click();
+                        return 'OK';
+                    }
+                }
+
+                // 2. Fallback: qualquer <button> visível com texto exato "OK"
+                var all = document.querySelectorAll('button');
+                for (var j = 0; j < all.length; j++) {
+                    if (all[j].offsetParent === null) continue;
+                    var t = all[j].textContent.trim().toUpperCase();
+                    if (t === 'OK') {
+                        all[j].click();
+                        return 'OK_FALLBACK';
+                    }
+                }
+
+                return 'NOT_FOUND';
+                """
+                result = self.driver.execute_script(js)
+                if result in ("OK", "OK_FALLBACK"):
+                    log.info(f"  Modal 'sucesso' fechado ({result})")
+                    return True
+                log.debug(f"  Modal OK tentativa {tentativa+1}: {result}")
+                time.sleep(0.4)
+            except Exception as e:
+                log.debug(f"  Modal OK tentativa {tentativa+1} erro: {e}")
+                time.sleep(0.4)
+
+        # Não achou o modal — provavelmente a versão do Papervines não mostra
+        # ou já foi fechado sozinho. Não é erro fatal, segue o loop.
+        log.debug("  Modal 'sucesso' não encontrado (pode não ter aparecido)")
+        return False
 
     def _clicar_btn_transferir(self) -> bool:
         """Clica no botão 'Transferir' do cliente (data-cy="button-session-transfer")."""
@@ -2440,7 +2525,7 @@ class BindEditorWindow(ctk.CTkToplevel):
         T = THEME
 
         self.title(f"Editar — {bind['name']}")
-        self.geometry("480x700")
+        self.geometry("480x780")
         self.attributes("-topmost", True)
         self.grab_set()
         self.resizable(False, True)
@@ -2535,6 +2620,24 @@ class BindEditorWindow(ctk.CTkToplevel):
         self.sgp_origem.insert(0, self.bind_data.get("sgp_origem_filtro", "whatsapp"))
         self.sgp_origem.pack(side="left")
 
+        # ── Linha 2: Motivo (usado quando 'Cadastrar + OS' estiver ligado) ──
+        row3 = ctk.CTkFrame(self, fg_color="transparent")
+        row3.pack(fill="x", padx=16, pady=(6, 0))
+        ctk.CTkLabel(row3, text="Motivo:", width=58, anchor="w", font=_font(10),
+                     text_color=T["text_dim"]).pack(side="left")
+        self.sgp_os_motivo = ctk.CTkEntry(
+            row3, width=260, placeholder_text="ex: corretiva, preventiva, reparo",
+            font=_font(11), fg_color=T["bg_input"], border_color=T["border"],
+            text_color=T["text"]
+        )
+        self.sgp_os_motivo.insert(0, self.bind_data.get("sgp_os_motivo_filtro", "corretiva"))
+        self.sgp_os_motivo.pack(side="left")
+
+        ctk.CTkLabel(
+            self, text="Motivo → usado só quando 'Cadastrar + OS' estiver marcado",
+            anchor="w", font=_font(9), text_color=T["text_dim"]
+        ).pack(fill="x", padx=16, pady=(2, 0))
+
         ctk.CTkLabel(
             self, text="VMA (supersonic) troca 'sus' → 'finan' automaticamente",
             anchor="w", font=_font(9), text_color="#444"
@@ -2575,14 +2678,14 @@ class BindEditorWindow(ctk.CTkToplevel):
             value=self.bind_data.get("sgp_auto_cadastrar_os", False)
         )
         ctk.CTkCheckBox(
-            frame_opts, text="Cadastrar + OS (motivo: corretiva)",
+            frame_opts, text="Cadastrar + OS (usa o filtro 'Motivo' acima)",
             variable=self.auto_cadastrar_os_var, font=_font(11),
             text_color=T["text"], fg_color=T["bg_input"],
             border_color=T["border"], checkmark_color=T["accent"],
             hover_color=T["accent_dark"]
         ).pack(anchor="w", pady=2)
         ctk.CTkLabel(
-            frame_opts, text="Cadastra ocorrência → preenche OS corretiva → cadastra OS",
+            frame_opts, text="Cadastra ocorrência → preenche motivo da OS → cadastra OS",
             anchor="w", font=_font(9), text_color="#444"
         ).pack(anchor="w", padx=20, pady=(0, 2))
 
@@ -2609,6 +2712,7 @@ class BindEditorWindow(ctk.CTkToplevel):
             message           = self.msg.get("1.0", "end-1c"),
             sgp_tipo_filtro   = self.sgp_tipo.get(),
             sgp_origem_filtro = self.sgp_origem.get(),
+            sgp_os_motivo_filtro = self.sgp_os_motivo.get().strip() or "corretiva",
             sgp_desmarcar_os  = self.desmarcar_os_var.get(),
             sgp_auto_cadastrar = self.auto_cadastrar_var.get(),
             sgp_auto_cadastrar_os = self.auto_cadastrar_os_var.get(),
