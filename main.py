@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SGPilot v5.1
+SGPilot v5.2
 - Rebranded: SGPilot
 - Duas abas: SGP + Papervines com temas visuais distintos
 - SGP: dark navy + verde/amarelo (combina com logo SGPilot)
@@ -73,7 +73,7 @@ except ImportError:
 #  CONSTANTES
 # ════════════════════════════════════════════════════════════
 
-APP_VERSION = "5.1.0"
+APP_VERSION = "5.2.0"
 
 # PyInstaller: __file__ aponta para temp, mas os logos ficam junto ao .exe
 if getattr(sys, 'frozen', False):
